@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Instagram Helper v2",
+  "version": "2.0",
+  "description": "Автоматизація Instagram — лайки підписників конкурента або учасників поста",
+  "permissions": ["storage", "tabs"],
+  "host_permissions": ["https://www.instagram.com/*"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [{
+    "matches": ["https://www.instagram.com/*"],
+    "js": ["content.js"],
+    "run_at": "document_idle"
+  }],
+  "action": { "default_popup": "popup.html" },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png"
+  }
+}
