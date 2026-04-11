@@ -464,45 +464,28 @@ async function sheetsAddHeader(sheetTab, postUrl) {
 async function runStories(st) {
   const path = window.location.pathname;
 
-  // Якщо ще на головній — відкриваємо перший сторіс
-  if (!path.startsWith('/stories/')) {
-    sendStatus('Шукаю сторіси...');
-    const firstStory = await waitFor(() =>
-      document.querySelector('button[aria-label*="tory"], div[role="button"][aria-label*="tory"], canvas[aria-label*="tory"]') ||
-      document.querySelector('div[style*="border-radius: 50%"][role="button"]') ||
-      // Шукаємо кільця сторісів у хедері/фіді
-      document.querySelector('div[aria-label] > div > canvas') ||
-      document.querySelector('ul[aria-label] li:first-child button') ||
-      document.querySelector('section main div[role="button"]:first-of-type')
-    , 6000);
-
-    if (firstStory) {
-      firstStory.click();
-    } else {
-      // Fallback: шукаємо будь-яке посилання на /stories/
-      const storyLink = document.querySelector('a[href^="/stories/"]');
-      if (storyLink) {
-        navigate(storyLink.href);
-      } else {
-        sendStatus('Не знайдено сторісів. Переконайся що ти на головній сторінці.');
-        await patchState({ running: false });
-        return;
-      }
-    }
-
-    // Чекаємо переходу на /stories/
-    await sleep(2000);
-    const newPath = window.location.pathname;
-    if (!newPath.startsWith('/stories/')) {
-      sendStatus('Не вдалось відкрити сторіси.');
-      await patchState({ running: false });
-      return;
-    }
+  // Вже відкриті сторіси — одразу починаємо дивитись
+  if (path.startsWith('/stories/')) {
+    sendStatus('Дивлюсь сторіси...');
+    await watchStoriesLoop(st);
+    return;
   }
 
-  // Тепер ми на /stories/ — запускаємо цикл спостереження
-  sendStatus('Дивлюсь сторіси...');
-  await watchStoriesLoop(st);
+  // Чекаємо завантаження фіду
+  sendStatus('Шукаю сторіси...');
+  await waitFor(() => document.querySelector('main'), 8000);
+  await sleep(2000); // даємо SPA час відрендерити сторіс-трей
+
+  // Шукаємо перше посилання на /stories/ — найнадійніший спосіб
+  const storyLink = document.querySelector('a[href^="/stories/"]');
+  if (storyLink) {
+    navigate(storyLink.href);
+    return; // content script перезапуститься на новій сторінці
+  }
+
+  // Якщо посилань немає — сторісів немає або сторінка ще не завантажилась
+  sendStatus('Сторісів не знайдено. Можливо всі вже переглянуті.');
+  await patchState({ running: false });
 }
 
 async function watchStoriesLoop(st) {
