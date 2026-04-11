@@ -145,6 +145,7 @@
   <div class="src-tabs">
     <button class="src-tab active" data-src="followers">Підписники</button>
     <button class="src-tab"        data-src="post">Пост</button>
+    <button class="src-tab"        data-src="stories">Сторіси</button>
   </div>
 
   <!-- Режим: підписники конкурента -->
@@ -167,13 +168,19 @@
     </div>
   </div>
 
-  <div class="section">
+  <!-- Режим: сторіси -->
+  <div class="section hidden" id="secStories">
+    <div class="section-title">Перегляд сторісів</div>
+    <div class="hint" style="font-size:12px;line-height:1.6">Розширення відкриє всі сторіси від акаунтів на які ти підписаний і лайкатиме кожну. Рекламні сторіси пропускаються автоматично.</div>
+  </div>
+
+  <div class="section" id="secFollowerSettings">
     <div class="section-title">Скільки підписників обробити</div>
     <input type="number" id="maxFollowers" value="50" min="5" max="500">
     <div class="hint">Кількість профілів які будуть оброблені за один запуск</div>
   </div>
 
-  <div class="section">
+  <div class="section" id="secLikesSettings">
     <div class="section-title">Лайків на профіль</div>
     <div class="range-row">
       <label>Від</label>
@@ -212,12 +219,12 @@
     <button class="btn btn-stop"  id="btnStop">■ Зупинити</button>
   </div>
 
-  <div class="stats">
+  <div class="stats" id="statsBlock">
     <div class="stat">
       <div class="stat-num" id="statLikes">0</div>
-      <div class="stat-label">Лайків</div>
+      <div class="stat-label" id="statLikesLabel">Лайків</div>
     </div>
-    <div class="stat">
+    <div class="stat" id="statProfilesBlock">
       <div class="stat-num" id="statProfiles">0</div>
       <div class="stat-label">Профілів</div>
     </div>

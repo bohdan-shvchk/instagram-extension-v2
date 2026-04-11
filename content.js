@@ -20,9 +20,14 @@ async function patchState(updates) {
 chrome.runtime.onMessage.addListener((msg, _, sendResponse) => {
   if (msg.type === 'start') {
     const { settings } = msg;
-    const isPost  = settings.source === 'post';
-    const phase   = isPost ? 'collect_post' : 'collect';
-    const destUrl = isPost ? settings.postUrl : `https://www.instagram.com/${settings.competitor}/`;
+    const isPost    = settings.source === 'post';
+    const isStories = settings.source === 'stories';
+    const phase     = isStories ? 'stories' : isPost ? 'collect_post' : 'collect';
+    const destUrl   = isPost
+      ? settings.postUrl
+      : isStories
+      ? 'https://www.instagram.com/'
+      : `https://www.instagram.com/${settings.competitor}/`;
     chrome.storage.local.set({
       [S]: { running: true, phase, settings, followerQueue: [], currentFollower: null, postQueue: [], stats: { likes: 0, profiles: 0 } }
     }, () => navigate(destUrl));
@@ -45,6 +50,7 @@ chrome.runtime.onMessage.addListener((msg, _, sendResponse) => {
   else if (st.phase === 'collect_post') await runCollectPost(st);
   else if (st.phase === 'profile')      await runProfile(st);
   else if (st.phase === 'post')         await runPost(st);
+  else if (st.phase === 'stories')      await runStories(st);
 })();
 
 // ─── PHASE: collect (підписники конкурента) ───────────────────────────────────
@@ -452,6 +458,152 @@ async function sheetsAddHeader(sheetTab, postUrl) {
   } catch (e) {
     console.warn('[IGH2] sheetsAddHeader error:', e);
   }
+}
+
+// ─── PHASE: stories ───────────────────────────────────────────────────────────
+async function runStories(st) {
+  const path = window.location.pathname;
+
+  // Якщо ще на головній — відкриваємо перший сторіс
+  if (!path.startsWith('/stories/')) {
+    sendStatus('Шукаю сторіси...');
+    const firstStory = await waitFor(() =>
+      document.querySelector('button[aria-label*="tory"], div[role="button"][aria-label*="tory"], canvas[aria-label*="tory"]') ||
+      document.querySelector('div[style*="border-radius: 50%"][role="button"]') ||
+      // Шукаємо кільця сторісів у хедері/фіді
+      document.querySelector('div[aria-label] > div > canvas') ||
+      document.querySelector('ul[aria-label] li:first-child button') ||
+      document.querySelector('section main div[role="button"]:first-of-type')
+    , 6000);
+
+    if (firstStory) {
+      firstStory.click();
+    } else {
+      // Fallback: шукаємо будь-яке посилання на /stories/
+      const storyLink = document.querySelector('a[href^="/stories/"]');
+      if (storyLink) {
+        navigate(storyLink.href);
+      } else {
+        sendStatus('Не знайдено сторісів. Переконайся що ти на головній сторінці.');
+        await patchState({ running: false });
+        return;
+      }
+    }
+
+    // Чекаємо переходу на /stories/
+    await sleep(2000);
+    const newPath = window.location.pathname;
+    if (!newPath.startsWith('/stories/')) {
+      sendStatus('Не вдалось відкрити сторіси.');
+      await patchState({ running: false });
+      return;
+    }
+  }
+
+  // Тепер ми на /stories/ — запускаємо цикл спостереження
+  sendStatus('Дивлюсь сторіси...');
+  await watchStoriesLoop(st);
+}
+
+async function watchStoriesLoop(st) {
+  let lastStoryId = null;
+
+  // Лайкаємо перший сторіс одразу
+  const initMatch = window.location.pathname.match(/\/stories\/([^/]+)\/(\d+)\//);
+  if (initMatch) {
+    lastStoryId = initMatch[2];
+    await sleep(1000);
+    await likeCurrentStory(st);
+  }
+
+  return new Promise(resolve => {
+    const interval = setInterval(async () => {
+      // Перевіряємо чи ще запущено
+      const state = await getState();
+      if (!state.running) {
+        clearInterval(interval);
+        resolve();
+        return;
+      }
+
+      const path = window.location.pathname;
+
+      // Сторіси закінчились
+      if (!path.startsWith('/stories/')) {
+        clearInterval(interval);
+        sendStatus('Всі сторіси переглянуто!');
+        const stats = state.stats || { likes: 0, profiles: 0 };
+        await patchState({ running: false });
+        chrome.runtime.sendMessage({ type: 'done', stats }).catch(() => {});
+        resolve();
+        return;
+      }
+
+      const match = path.match(/\/stories\/([^/]+)\/(\d+)\//);
+      if (!match) return;
+
+      const storyId = match[2];
+      if (storyId !== lastStoryId) {
+        lastStoryId = storyId;
+        await sleep(800); // чекаємо завантаження DOM нового сторісу
+        await likeCurrentStory(state);
+      }
+    }, 600);
+  });
+}
+
+async function likeCurrentStory(st) {
+  // Пропускаємо рекламу
+  if (isStoryAd()) {
+    sendStatus('Реклама — пропускаю');
+    return;
+  }
+
+  const match = window.location.pathname.match(/\/stories\/([^/]+)\/(\d+)\//);
+  if (!match) return;
+
+  const username = match[1];
+  const mediaId  = match[2];
+
+  // Спочатку пробуємо API
+  const liked = await likeViaAPI(mediaId);
+
+  if (liked) {
+    const stats = (st.stats || { likes: 0, profiles: 0 });
+    stats.likes++;
+    await patchState({ stats });
+    chrome.runtime.sendMessage({ type: 'stats', data: stats }).catch(() => {});
+    sendStatus(`❤ @${username} (${stats.likes})`);
+  } else {
+    // Fallback: клік по кнопці лайку в UI
+    const likeBtn =
+      document.querySelector('button[aria-label="Like"]') ||
+      document.querySelector('button[aria-label="Подобається"]') ||
+      [...document.querySelectorAll('button')].find(b => {
+        const svg = b.querySelector('svg');
+        return svg && (svg.getAttribute('aria-label') === 'Like' || svg.getAttribute('aria-label') === 'Подобається');
+      });
+
+    if (likeBtn) {
+      likeBtn.click();
+      const stats = (st.stats || { likes: 0, profiles: 0 });
+      stats.likes++;
+      await patchState({ stats });
+      chrome.runtime.sendMessage({ type: 'stats', data: stats }).catch(() => {});
+      sendStatus(`❤ @${username} (${stats.likes})`);
+    } else {
+      sendStatus(`@${username} — не вдалось лайкнути`);
+    }
+  }
+}
+
+function isStoryAd() {
+  // Instagram позначає рекламні сторіси міткою "Sponsored" або "Реклама"
+  const article = document.querySelector('section[role="presentation"], article, div[role="dialog"]') || document.body;
+  const text    = article.innerText || '';
+  if (text.includes('Sponsored') || text.includes('Реклама')) return true;
+  if (document.querySelector('[aria-label="Sponsored"]')) return true;
+  return false;
 }
 
 // ─── DOM helpers ───────────────────────────────────────────────────────────────

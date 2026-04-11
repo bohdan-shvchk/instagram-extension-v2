@@ -6,14 +6,34 @@ const S = 'igh2_state';
 let currentSource     = 'followers';
 let currentPostSource = 'likers';
 
+function applySource(src) {
+  currentSource = src;
+  document.querySelectorAll('.src-tab').forEach(t => t.classList.remove('active'));
+  document.querySelector(`.src-tab[data-src="${src}"]`).classList.add('active');
+
+  const isFollowers = src === 'followers';
+  const isPost      = src === 'post';
+  const isStories   = src === 'stories';
+
+  $('secFollowers').classList.toggle('hidden',          !isFollowers);
+  $('secPost').classList.toggle('hidden',               !isPost);
+  $('secStories').classList.toggle('hidden',            !isStories);
+  $('secFollowerSettings').classList.toggle('hidden',   isStories);
+  $('secLikesSettings').classList.toggle('hidden',      isStories);
+
+  // Пауза між лайками/профілями не потрібна для сторісів
+  const delayLikes    = document.querySelector('.section:has(#delayBetweenLikes)');
+  const delayProfiles = document.querySelector('.section:has(#delayBetweenProfiles)');
+  if (delayLikes)    delayLikes.classList.toggle('hidden',    isStories);
+  if (delayProfiles) delayProfiles.classList.toggle('hidden', isStories);
+
+  // Статистика: для сторісів — тільки лайки
+  $('statProfilesBlock').classList.toggle('hidden', isStories);
+  $('statLikesLabel').textContent = isStories ? 'Сторісів лайкнуто' : 'Лайків';
+}
+
 document.querySelectorAll('.src-tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    currentSource = tab.dataset.src;
-    document.querySelectorAll('.src-tab').forEach(t => t.classList.remove('active'));
-    tab.classList.add('active');
-    $('secFollowers').classList.toggle('hidden', currentSource === 'post');
-    $('secPost').classList.toggle('hidden',      currentSource === 'followers');
-  });
+  tab.addEventListener('click', () => applySource(tab.dataset.src));
 });
 
 document.querySelectorAll('#psTgl .ps-opt').forEach(opt => {
@@ -38,13 +58,8 @@ chrome.storage.local.get(S, d => {
     $('delayBetweenProfiles').value    = st.settings.delayBetweenProfiles    ?? 20;
     $('delayBetweenProfilesMax').value = st.settings.delayBetweenProfilesMax ?? 60;
 
-    if (st.settings.source === 'post') {
-      currentSource = 'post';
-      document.querySelector('.src-tab[data-src="post"]').classList.add('active');
-      document.querySelector('.src-tab[data-src="followers"]').classList.remove('active');
-      $('secFollowers').classList.add('hidden');
-      $('secPost').classList.remove('hidden');
-    }
+    if (st.settings.source) applySource(st.settings.source);
+
     if (st.settings.postSource) {
       currentPostSource = st.settings.postSource;
       document.querySelectorAll('#psTgl .ps-opt').forEach(o => {
@@ -60,7 +75,13 @@ chrome.storage.local.get(S, d => {
 chrome.runtime.onMessage.addListener(msg => {
   if (msg.type === 'stats')  updateStats(msg.data);
   if (msg.type === 'status') { $('statusMsg').className = 'status'; $('statusMsg').textContent = msg.text; }
-  if (msg.type === 'done')   setRunning(false, `Готово! Лайків: ${msg.stats?.likes ?? 0}, профілів: ${msg.stats?.profiles ?? 0}`);
+  if (msg.type === 'done') {
+    const s = msg.stats ?? {};
+    const text = currentSource === 'stories'
+      ? `Готово! Сторісів лайкнуто: ${s.likes ?? 0}`
+      : `Готово! Лайків: ${s.likes ?? 0}, профілів: ${s.profiles ?? 0}`;
+    setRunning(false, text);
+  }
 });
 
 function updateStats(s) {
@@ -104,15 +125,22 @@ $('btnStart').addEventListener('click', async () => {
     $('statusMsg').textContent = 'Введи коректне посилання на пост!';
     return;
   }
-  if (settings.likesMin > settings.likesMax) {
+  if (currentSource !== 'stories' && settings.likesMin > settings.likesMax) {
     $('statusMsg').className = 'status error';
     $('statusMsg').textContent = 'Мін лайків має бути ≤ макс';
     return;
   }
 
-  const isPost  = currentSource === 'post';
-  const phase   = isPost ? 'collect_post' : 'collect';
-  const destUrl = isPost
+  const isPost    = currentSource === 'post';
+  const isStories = currentSource === 'stories';
+  const phase     = isStories ? 'stories' : isPost ? 'collect_post' : 'collect';
+  const destUrl   = isPost
+    ? settings.postUrl
+    : `https://www.instagram.com/`;
+
+  const destUrlFinal = isStories
+    ? 'https://www.instagram.com/'
+    : isPost
     ? settings.postUrl
     : `https://www.instagram.com/${settings.competitor}/`;
 
@@ -124,12 +152,12 @@ $('btnStart').addEventListener('click', async () => {
     chrome.tabs.sendMessage(tabs[0].id, { type: 'start', settings }).catch(() => {
       chrome.storage.local.set({
         [S]: { running: true, phase, settings, followerQueue: [], postQueue: [], stats: { likes: 0, profiles: 0 } }
-      }, () => chrome.tabs.update(tabs[0].id, { url: destUrl }));
+      }, () => chrome.tabs.update(tabs[0].id, { url: destUrlFinal }));
     });
   } else {
     chrome.storage.local.set({
       [S]: { running: true, phase, settings, followerQueue: [], postQueue: [], stats: { likes: 0, profiles: 0 } }
-    }, () => chrome.tabs.create({ url: destUrl, active: true }));
+    }, () => chrome.tabs.create({ url: destUrlFinal, active: true }));
   }
 });
 
