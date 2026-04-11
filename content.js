@@ -464,27 +464,46 @@ async function sheetsAddHeader(sheetTab, postUrl) {
 async function runStories(st) {
   const path = window.location.pathname;
 
-  // Вже відкриті сторіси — одразу починаємо дивитись
+  // Вже на сторінці сторісу — запускаємо цикл
   if (path.startsWith('/stories/')) {
     sendStatus('Дивлюсь сторіси...');
     await watchStoriesLoop(st);
     return;
   }
 
-  // Чекаємо завантаження фіду
-  sendStatus('Шукаю сторіси...');
-  await waitFor(() => document.querySelector('main'), 8000);
-  await sleep(2000); // даємо SPA час відрендерити сторіс-трей
+  sendStatus('Отримую список сторісів...');
 
-  // Шукаємо перше посилання на /stories/ — найнадійніший спосіб
-  const storyLink = document.querySelector('a[href^="/stories/"]');
-  if (storyLink) {
-    navigate(storyLink.href);
-    return; // content script перезапуститься на новій сторінці
+  // Отримуємо трей сторісів через API
+  try {
+    const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1];
+    const res = await fetch('https://www.instagram.com/api/v1/feed/reels_tray/', {
+      credentials: 'include',
+      headers: {
+        'X-CSRFToken': csrf || '',
+        'X-Instagram-AJAX': '1',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+    });
+
+    if (res.ok) {
+      const json = await res.json();
+      const tray = json.tray || [];
+      if (tray.length > 0) {
+        const firstUsername = tray[0].user?.username;
+        if (firstUsername) {
+          navigate(`https://www.instagram.com/stories/${firstUsername}/`);
+          return;
+        }
+      }
+      sendStatus('Сторісів немає — всі вже переглянуті.');
+      await patchState({ running: false });
+      return;
+    }
+  } catch (e) {
+    console.warn('[IGH2] reels_tray error:', e);
   }
 
-  // Якщо посилань немає — сторісів немає або сторінка ще не завантажилась
-  sendStatus('Сторісів не знайдено. Можливо всі вже переглянуті.');
+  sendStatus('Не вдалось отримати сторіси. Спробуй ще раз.');
   await patchState({ running: false });
 }
 
