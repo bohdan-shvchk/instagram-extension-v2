@@ -464,56 +464,103 @@ async function sheetsAddHeader(sheetTab, postUrl) {
 async function runStories(st) {
   const path = window.location.pathname;
 
-  // Вже на сторінці сторісу — запускаємо цикл
+  // Вже в story viewer — запускаємо цикл (сюди потрапляємо після нативного кліку)
   if (path.startsWith('/stories/')) {
-    await clickViewStoryIfPresent();
     sendStatus('Дивлюсь сторіси...');
     await watchStoriesLoop(st);
     return;
   }
 
-  sendStatus('Отримую список сторісів...');
+  // ─── Нативний клік на кружечок сторісу прямо в DOM ─────────────────────────
+  // Це єдиний спосіб відкрити сторіс без "View Story" confirmation
+  sendStatus('Шукаю сторіси...');
+  await waitFor(() => document.querySelector('main'), 8000);
+  await sleep(3000); // чекаємо завантаження stories tray
 
-  // Отримуємо трей сторісів через API
+  // Отримуємо першого юзера через API — щоб знати чий кружечок шукати
+  let firstUsername = null;
   try {
-    const csrf    = document.cookie.match(/csrftoken=([^;]+)/)?.[1];
+    const csrf     = document.cookie.match(/csrftoken=([^;]+)/)?.[1];
     const wwwClaim = localStorage.getItem('x-ig-www-claim') || '';
-
     const res = await fetch('https://www.instagram.com/api/v1/feed/reels_tray/', {
       credentials: 'include',
       headers: {
-        'X-CSRFToken':        csrf || '',
-        'X-IG-App-ID':        '936619743392459',
-        'X-IG-WWW-Claim':     wwwClaim,
-        'X-Instagram-AJAX':   '1',
-        'X-Requested-With':   'XMLHttpRequest',
+        'X-CSRFToken': csrf || '', 'X-IG-App-ID': '936619743392459',
+        'X-IG-WWW-Claim': wwwClaim, 'X-Instagram-AJAX': '1', 'X-Requested-With': 'XMLHttpRequest',
       },
     });
-
-    console.log('[IGH2] reels_tray status:', res.status);
-
     if (res.ok) {
       const json = await res.json();
       const tray = json.tray || [];
-      if (tray.length > 0) {
-        const firstUsername = tray[0].user?.username;
-        if (firstUsername) {
-          navigate(`https://www.instagram.com/stories/${firstUsername}/`);
-          return;
-        }
+      if (tray.length === 0) {
+        sendStatus('Сторісів немає — всі вже переглянуті.');
+        await patchState({ running: false });
+        return;
       }
-      sendStatus('Сторісів немає — всі вже переглянуті.');
-      await patchState({ running: false });
-      return;
+      firstUsername = tray[0].user?.username || null;
+      console.log('[IGH2] first story username:', firstUsername);
     }
-
-    console.warn('[IGH2] reels_tray non-ok:', res.status);
   } catch (e) {
     console.warn('[IGH2] reels_tray error:', e);
   }
 
-  sendStatus('Не вдалось отримати сторіси. Спробуй ще раз.');
-  await patchState({ running: false });
+  // Знаходимо кружечок сторісу і клікаємо нативно
+  const storyBtn = findStoryRingButton(firstUsername);
+  if (!storyBtn) {
+    sendStatus('Не вдалось знайти сторіси на сторінці. Переконайся що відкрита головна.');
+    await patchState({ running: false });
+    return;
+  }
+
+  sendStatus('Відкриваю сторіси...');
+  storyBtn.click();
+
+  // Чекаємо переходу URL до /stories/ (pushState — без перезавантаження)
+  const arrived = await waitFor(() =>
+    window.location.pathname.startsWith('/stories/') ? true : null
+  , 6000);
+
+  if (!arrived) {
+    sendStatus('Не вдалось відкрити сторіси.');
+    await patchState({ running: false });
+    return;
+  }
+
+  await sleep(800);
+  sendStatus('Дивлюсь сторіси...');
+  await watchStoriesLoop(st);
+}
+
+function findStoryRingButton(preferredUsername) {
+  // Якщо знаємо username — шукаємо img з alt що містить його
+  if (preferredUsername) {
+    const allButtons = document.querySelectorAll('button, div[role="button"], a[role="link"]');
+    for (const btn of allButtons) {
+      const img = btn.querySelector('img');
+      if (img) {
+        const alt = (img.alt || img.getAttribute('aria-label') || '').toLowerCase();
+        if (alt.includes(preferredUsername.toLowerCase())) return btn;
+      }
+    }
+  }
+
+  // Fallback: знаходимо першу кнопку з аватаром у stories tray
+  // Stories tray — горизонтальний список у верхній частині фіду
+  const feedTop = document.querySelector('main section, main > div > div');
+  if (feedTop) {
+    const btns = feedTop.querySelectorAll('button, div[role="button"]');
+    for (const btn of btns) {
+      const img = btn.querySelector('img');
+      if (!img) continue;
+      // Пропускаємо "Add Story" / власний профіль (зазвичай перший)
+      const rect = btn.getBoundingClientRect();
+      if (rect.width > 10 && rect.width < 100 && rect.height > 10) {
+        // Підозрілий кандидат на story ring — пропускаємо перший (Add Story)
+        return btn;
+      }
+    }
+  }
+  return null;
 }
 
 async function watchStoriesLoop(st) {
@@ -550,9 +597,6 @@ async function watchStoriesLoop(st) {
         resolve();
         return;
       }
-
-      // Якщо є кнопка підтвердження — клікаємо (новий акаунт з privacy)
-      await clickViewStoryIfPresent();
 
       const match = path.match(/\/stories\/([^/]+)\/(\d+)\//);
       if (!match) return;
