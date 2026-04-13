@@ -475,15 +475,21 @@ async function runStories(st) {
 
   // Отримуємо трей сторісів через API
   try {
-    const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1];
+    const csrf    = document.cookie.match(/csrftoken=([^;]+)/)?.[1];
+    const wwwClaim = localStorage.getItem('x-ig-www-claim') || '';
+
     const res = await fetch('https://www.instagram.com/api/v1/feed/reels_tray/', {
       credentials: 'include',
       headers: {
-        'X-CSRFToken': csrf || '',
-        'X-Instagram-AJAX': '1',
-        'X-Requested-With': 'XMLHttpRequest',
+        'X-CSRFToken':        csrf || '',
+        'X-IG-App-ID':        '936619743392459',
+        'X-IG-WWW-Claim':     wwwClaim,
+        'X-Instagram-AJAX':   '1',
+        'X-Requested-With':   'XMLHttpRequest',
       },
     });
+
+    console.log('[IGH2] reels_tray status:', res.status);
 
     if (res.ok) {
       const json = await res.json();
@@ -499,6 +505,8 @@ async function runStories(st) {
       await patchState({ running: false });
       return;
     }
+
+    console.warn('[IGH2] reels_tray non-ok:', res.status);
   } catch (e) {
     console.warn('[IGH2] reels_tray error:', e);
   }
