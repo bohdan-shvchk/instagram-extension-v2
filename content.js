@@ -629,7 +629,6 @@ async function clickViewStoryIfPresent() {
 }
 
 async function likeCurrentStory(st) {
-  // Пропускаємо рекламу
   if (isStoryAd()) {
     sendStatus('Реклама — пропускаю');
     return;
@@ -641,35 +640,72 @@ async function likeCurrentStory(st) {
   const username = match[1];
   const mediaId  = match[2];
 
-  // Спочатку пробуємо API
-  const liked = await likeViaAPI(mediaId);
+  // 1. Пробуємо клікнути DOM-кнопку — найнадійніше для сторісів
+  const domLiked = tryClickStoryLikeButton();
 
-  if (liked) {
-    const stats = (st.stats || { likes: 0, profiles: 0 });
+  // 2. Якщо DOM-кнопка не знайдена — API
+  const apiLiked = domLiked ? false : await likeStoryViaAPI(mediaId);
+
+  if (domLiked || apiLiked) {
+    const stats = { ...(st.stats || { likes: 0, profiles: 0 }) };
     stats.likes++;
     await patchState({ stats });
     chrome.runtime.sendMessage({ type: 'stats', data: stats }).catch(() => {});
     sendStatus(`❤ @${username} (${stats.likes})`);
   } else {
-    // Fallback: клік по кнопці лайку в UI
-    const likeBtn =
-      document.querySelector('button[aria-label="Like"]') ||
-      document.querySelector('button[aria-label="Подобається"]') ||
-      [...document.querySelectorAll('button')].find(b => {
-        const svg = b.querySelector('svg');
-        return svg && (svg.getAttribute('aria-label') === 'Like' || svg.getAttribute('aria-label') === 'Подобається');
-      });
+    sendStatus(`@${username} — пропускаю (лайк недоступний)`);
+  }
+}
 
-    if (likeBtn) {
-      likeBtn.click();
-      const stats = (st.stats || { likes: 0, profiles: 0 });
-      stats.likes++;
-      await patchState({ stats });
-      chrome.runtime.sendMessage({ type: 'stats', data: stats }).catch(() => {});
-      sendStatus(`❤ @${username} (${stats.likes})`);
-    } else {
-      sendStatus(`@${username} — не вдалось лайкнути`);
-    }
+function tryClickStoryLikeButton() {
+  // Шукаємо кнопку лайку у story viewer (не вже лайкнуту)
+  for (const sel of [
+    'button[aria-label="Like"]',
+    'button[aria-label="Подобається"]',
+  ]) {
+    const btn = document.querySelector(sel);
+    if (btn) { btn.click(); return true; }
+  }
+  // SVG всередині button
+  for (const svg of document.querySelectorAll('svg[aria-label="Like"], svg[aria-label="Подобається"]')) {
+    const btn = svg.closest('button');
+    if (btn) { btn.click(); return true; }
+  }
+  return false;
+}
+
+async function likeStoryViaAPI(mediaId) {
+  try {
+    const csrf     = document.cookie.match(/csrftoken=([^;]+)/)?.[1];
+    const wwwClaim = localStorage.getItem('x-ig-www-claim') || '';
+    if (!csrf) return false;
+
+    const headers = {
+      'X-CSRFToken':      csrf,
+      'X-IG-App-ID':      '936619743392459',
+      'X-IG-WWW-Claim':   wwwClaim,
+      'X-Instagram-AJAX': '1',
+      'X-Requested-With': 'XMLHttpRequest',
+      'Content-Type':     'application/x-www-form-urlencoded',
+      'Referer':          window.location.href,
+    };
+
+    // Ендпоінт для сторісів
+    let res = await fetch(`https://www.instagram.com/api/v1/media/${mediaId}/like/`, {
+      method: 'POST', credentials: 'include', headers,
+    });
+    console.log('[IGH2] story like /media/ status:', res.status);
+    if (res.ok) return true;
+
+    // Fallback — ендпоінт для постів (іноді спрацьовує і для сторісів)
+    res = await fetch(`https://www.instagram.com/api/v1/web/likes/${mediaId}/like/`, {
+      method: 'POST', credentials: 'include', headers,
+    });
+    console.log('[IGH2] story like /web/ status:', res.status);
+    return res.ok;
+  } catch (e) {
+    console.warn('[IGH2] likeStoryViaAPI error:', e);
+    return false;
   }
 }
 
