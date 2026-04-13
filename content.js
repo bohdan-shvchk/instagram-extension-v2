@@ -466,6 +466,7 @@ async function runStories(st) {
 
   // Вже на сторінці сторісу — запускаємо цикл
   if (path.startsWith('/stories/')) {
+    await clickViewStoryIfPresent();
     sendStatus('Дивлюсь сторіси...');
     await watchStoriesLoop(st);
     return;
@@ -516,19 +517,20 @@ async function runStories(st) {
 }
 
 async function watchStoriesLoop(st) {
-  let lastStoryId = null;
+  let lastStoryId   = null;
+  let lastUsername  = null;
 
   // Лайкаємо перший сторіс одразу
   const initMatch = window.location.pathname.match(/\/stories\/([^/]+)\/(\d+)\//);
   if (initMatch) {
-    lastStoryId = initMatch[2];
-    await sleep(1000);
+    lastUsername = initMatch[1];
+    lastStoryId  = initMatch[2];
+    await sleep(800);
     await likeCurrentStory(st);
   }
 
   return new Promise(resolve => {
     const interval = setInterval(async () => {
-      // Перевіряємо чи ще запущено
       const state = await getState();
       if (!state.running) {
         clearInterval(interval);
@@ -538,7 +540,7 @@ async function watchStoriesLoop(st) {
 
       const path = window.location.pathname;
 
-      // Сторіси закінчились
+      // Сторіси закінчились — вийшли зі /stories/
       if (!path.startsWith('/stories/')) {
         clearInterval(interval);
         sendStatus('Всі сторіси переглянуто!');
@@ -549,17 +551,35 @@ async function watchStoriesLoop(st) {
         return;
       }
 
+      // Якщо є кнопка підтвердження — клікаємо (новий акаунт з privacy)
+      await clickViewStoryIfPresent();
+
       const match = path.match(/\/stories\/([^/]+)\/(\d+)\//);
       if (!match) return;
 
-      const storyId = match[2];
+      const [, username, storyId] = match;
+
       if (storyId !== lastStoryId) {
-        lastStoryId = storyId;
-        await sleep(800); // чекаємо завантаження DOM нового сторісу
+        lastUsername = username;
+        lastStoryId  = storyId;
+        await sleep(800);
         await likeCurrentStory(state);
       }
     }, 600);
   });
+}
+
+async function clickViewStoryIfPresent() {
+  await sleep(600);
+  const buttons = document.querySelectorAll('button');
+  for (const btn of buttons) {
+    const text = btn.textContent.trim();
+    if (text === 'View Story' || text === 'Переглянути історію' || text === 'View story') {
+      btn.click();
+      await sleep(1000);
+      return;
+    }
+  }
 }
 
 async function likeCurrentStory(st) {
