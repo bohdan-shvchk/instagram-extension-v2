@@ -570,15 +570,17 @@ async function watchStoriesLoop(st) {
 }
 
 async function clickViewStoryIfPresent() {
-  await sleep(600);
-  const buttons = document.querySelectorAll('button');
-  for (const btn of buttons) {
-    const text = btn.textContent.trim();
-    if (text === 'View Story' || text === 'Переглянути історію' || text === 'View story') {
-      btn.click();
-      await sleep(1000);
-      return;
+  const btn = await waitFor(() => {
+    for (const b of document.querySelectorAll('button')) {
+      const text = b.textContent.trim().toLowerCase();
+      if (text.includes('view story') || text.includes('переглянути')) return b;
     }
+    return null;
+  }, 4000);
+
+  if (btn) {
+    btn.click();
+    await sleep(1500);
   }
 }
 
